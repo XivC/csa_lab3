@@ -1,0 +1,61 @@
+{
+  "data": [
+    0,
+    0,
+    0,
+    0,
+    97,
+    98,
+    99,
+    100,
+    101
+  ],
+  "program": [
+    {
+      "operation": "LD",
+      "fetch_mode": "abs_mem",
+      "data": 9
+    },
+    {
+      "operation": "INC"
+    },
+    {
+      "operation": "SV",
+      "fetch_mode": "abs_mem",
+      "data": 9
+    },
+    {
+      "operation": "DEC"
+    },
+    {
+      "operation": "ADD",
+      "fetch_mode": "4",
+      "data": 0
+    },
+    {
+      "operation": "SUB",
+      "fetch_mode": "8",
+      "data": 0
+    },
+    {
+      "operation": "JZ",
+      "fetch_mode": "abs",
+      "data": 11
+    },
+    {
+      "operation": "ADD",
+      "fetch_mode": "8",
+      "data": 0
+    },
+    {
+      "operation": "LD",
+      "fetch_mode": "acc",
+      "data": 0
+    },
+    {
+      "operation": "SV",
+      "fetch_mode": "abs_mem",
+      "data": 1
+    }
+  ]
+}
