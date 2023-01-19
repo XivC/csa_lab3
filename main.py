@@ -5,5 +5,8 @@ with open('prog.as') as f:
     text = f.readlines()
 
 program = parse(text)
-machine = Machine(program)
-machine.run()
+machine = Machine(initial=program, need_log_registers=True)
+
+while True:
+    machine.single_step()
+    input()

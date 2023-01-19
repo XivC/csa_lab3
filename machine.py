@@ -24,15 +24,16 @@ class InstructionsMemory:
     Instruction format:
     {
         "operation": <op-code>,
-        "fetch_type": "<const/rel/abs/acc>",
+        "fetch_type": "<const/instr_rel/abs_mem/acc>",
         "data": <number>,
     }
     const = data->data_reg
-    const_rel (instr_pointer + data) -> data_reg
     abs_mem = mem(data)->data_reg
-    rel_mem = mem(addr_reg+data) -> data_reg
+    instr_rel = instr_pointer+data -> data_reg
     acc = acc->data_reg
     """
+
+    bit_depth = 16
 
     def __init__(self, instr_pointer: Register, program: List[Optional[dict]] = None):
         self._instr_pointer: Register = instr_pointer
@@ -93,14 +94,17 @@ class DataMemory:
 class ALU:
     bit_depth = 16
 
-    def __init__(self, acc: Register, addr_reg: Register, data_reg: Register, instr_pointer: Register):
+    def __init__(self, acc: Register, addr_reg: Register, data_reg: Register, instr_pointer: Register,
+                 instr_data_reg: Register, ):
         self._acc: Register = acc
         self._addr_reg: Register = addr_reg
         self._data_reg: Register = data_reg
         self._instr_pointer: Register = instr_pointer
+        self._instr_data_reg: Register = instr_data_reg
 
     def perform(self, signals: list) -> None:
-        left: Number = Number(self.bit_depth, int(self._acc.read()) | int(self._instr_pointer.read()))
+        left: Number = Number(self.bit_depth, int(self._acc.read()) | int(self._instr_pointer.read()) | int(
+            self._instr_data_reg.read()))
         right: Number = Number(self.bit_depth, int(self._data_reg.read()) | int(self._addr_reg.read()))
         res: Number = Number(self.bit_depth)
         if 'inc' in signals:
@@ -124,6 +128,7 @@ class ControlUnit:
                  acc: Register,
                  addr_reg: Register,
                  data_reg: Register,
+                 instr_data_reg: Register,
                  instr_pointer: Register,
                  instr_mem: InstructionsMemory,
                  data_mem: DataMemory,
@@ -133,6 +138,7 @@ class ControlUnit:
         self._addr_reg = addr_reg
         self._data_reg = data_reg
         self._instr_pointer = instr_pointer
+        self._instr_data_reg = instr_data_reg
         self._instr_mem = instr_mem
         self._data_mem = data_mem
         self._alu = alu
@@ -155,44 +161,68 @@ class ControlUnit:
         self._instr_pointer.close_read()
 
     def _fetch_data(self):
-        def _fetch_from_mem(rel=False):
+        def _fetch_from_mem():
+
+            # isntr_data -> addr_reg
             self._addr_reg.open_write()
+            self._instr_data_reg.open_read()
+            self._alu.perform([])
+            self._addr_reg.close_write()
+            self._instr_data_reg.close_read()
 
-            if not rel:
-                addr = value
-            else:
-                addr = self._addr_reg.value + value
-
-            self._addr_reg.write(addr)
+            # mem(addr_reg) -> data_reg
             self._addr_reg.open_read()
+            self._data_reg.open_write()
             self._data_mem.read()
             self._addr_reg.close_read()
+            self._data_reg.close_write()
 
-        value = Number(self._acc.bit_depth, self.instruction['data'])
-        fetch_type = self.instruction['fetch_type']
-        self._data_reg.open_write()
+        def _fetch_const():
+            self._data_reg.open_write()
+            self._instr_data_reg.open_read()
+            self._alu.perform([])
+            self._instr_data_reg.close_read()
+            self._data_reg.close_write()
 
-        if fetch_type == 'const':
-            self._data_reg.write(value)
-        elif fetch_type == 'const_rel':
-            self._data_reg.write(self._instr_pointer.value + value)
-
-        elif fetch_type == 'acc':
+        def _fetch_acc():
+            self._data_reg.open_write()
             self._acc.open_read()
             self._alu.perform([])
             self._acc.close_read()
-        elif fetch_type == 'abs_mem':
-            _fetch_from_mem()
-        elif fetch_type == 'rel_mem':
-            _fetch_from_mem(rel=True)
-        else:
+            self._data_reg.close_write()
+
+        def _fetch_instr_rel():
+            _fetch_const()  # instr_data -> data_reg
+
+            # instr_pointer + data_reg -> data_reg
+            self._instr_pointer.open_read()
+            self._data_reg.open_read()
+            self._data_reg.open_write()
+            self._alu.perform([])
+            self._instr_pointer.close_read()
+            self._data_reg.close_read()
+            self._data_reg.close_write()
+
+        def _invalid_fetch():
             raise InstructionError(self.instruction, 'invalid fetch_type')
 
-        self._data_reg.close_write()
+        fetch_type = self.instruction['fetch_type']
+
+        {
+            'const': _fetch_const,
+            'acc': _fetch_acc,
+            'abs_mem': _fetch_from_mem,
+            'instr_rel': _fetch_instr_rel,
+        }.get(fetch_type, _invalid_fetch)()
 
     def _perform(self):
         if not self.instruction:
             return
+
+        if self.instruction.get('data') is not None:
+            self._instr_data_reg.open_write()
+            self._instr_data_reg.write(Number(self._instr_mem.bit_depth, self.instruction['data']))
+            self._instr_data_reg.close_write()
 
         {
             'INC': self._inc,
@@ -335,7 +365,7 @@ class ControlUnit:
 class Machine:
     bit_depth = 16
 
-    def __init__(self, initial: Optional[dict] = None):
+    def __init__(self, initial: Optional[dict] = None, need_log_registers: bool = False):
         memory, program = self._parse_initial(initial)
 
         # Собираем машину
@@ -343,7 +373,9 @@ class Machine:
         self._addr_reg: Register = Register(self.bit_depth)
         self._data_reg: Register = Register(self.bit_depth)
         self._instr_pointer: Register = Register(self.bit_depth)
+        self._instr_data_reg: Register = Register(self.bit_depth)
         self._instr_mem: InstructionsMemory = InstructionsMemory(self._instr_pointer, program)
+        self._need_log_registers: bool = need_log_registers
 
         self._data_mem: DataMemory = DataMemory(
             self._addr_reg,
@@ -351,11 +383,12 @@ class Machine:
             [FileInputDevice(), FileOutputDevice()],
             data=memory,
         )
-        self._alu: ALU = ALU(self._acc, self._addr_reg, self._data_reg, self._instr_pointer)
+        self._alu: ALU = ALU(self._acc, self._addr_reg, self._data_reg, self._instr_pointer, self._instr_data_reg)
         self._control_unit: ControlUnit = ControlUnit(
             self._acc,
             self._addr_reg,
             self._data_reg,
+            self._instr_data_reg,
             self._instr_pointer,
             self._instr_mem,
             self._data_mem,
@@ -372,6 +405,7 @@ class Machine:
         """
         data_raw = initial.get('data')
         data: List[Number] = []
+        self._steps: int = 0
         for token in data_raw:
             if type(token) != int:
                 raise RuntimeError(f'Parsing error: token {token} should be int')
@@ -383,14 +417,29 @@ class Machine:
 
     def single_step(self) -> None:
         try:
+
             self._control_unit.step()
-        except HaltedError:
-            print('Machine halted')
+        except HaltedError as err:
+            raise err
+        else:
+            self._steps += 1
+            if self._need_log_registers:
+                self._log_registers()
 
     def run(self) -> None:
         while True:
             try:
-                self._control_unit.step()
+                self.single_step()
             except HaltedError:
                 print('Machine halted')
                 return
+
+    def _log_registers(self):
+        print(f'step: {self._steps}; '
+              f'instr: {int(self._instr_pointer.value)}; '
+              f'instr_data: {int(self._instr_data_reg.value)};'
+              f' acc: {int(self._acc.value)};'
+              f' add_reg: {int(self._addr_reg.value)};'
+              f' data_reg: {int(self._data_reg.value)}; ')
+
+

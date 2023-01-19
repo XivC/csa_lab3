@@ -9,7 +9,7 @@
 
 .text
 0. LD abs_mem 10
-1. JZ const 7
+1. JZ instr_rel 6
 2. SV const 1
 3. LD const 10
 4. INC
